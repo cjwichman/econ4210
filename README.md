@@ -4,7 +4,9 @@ Course website. Static HTML, served from GitHub Pages at
 <https://www.caseyjwichman.com/econ4210/>.
 
 Scope is the weekly schedule, the readings, and the slides. Course policies
-live in the syllabus PDF and are not repeated here. Assignments, grades, and
+live in the syllabus PDF and are not repeated here. The syllabus PDF is the
+definitive statement of policies; the site is the definitive schedule and
+reading list. Neither repeats the other. Assignments, grades, and
 book-chapter readings stay on Canvas.
 
 No build step. The HTML files are both the source and what gets served.
@@ -20,8 +22,7 @@ stale page by forgetting to run something.
 | `style.css` | Shared by both pages. Palette is at the top. |
 | `readings/` | Journal-article PDFs, named `author-year.pdf`. Book chapters do not go here — Canvas only. |
 | `slides/` | Lecture PDFs, named `classNN.pdf`. |
-| `econ4210_fall2026_syllabus.pdf` | Full syllabus. Compiled in `syllabus/`, copied here. |
-| `econ4210_fall2026_public.pdf` | Public syllabus posted under the USG rule. Compiled in `syllabus/`, copied here. |
+| `econ4210_fall2026_syllabus.pdf` | THE syllabus: policies, grading, exam dates, course topics, book list. No schedule, no reading list. Compiled in `syllabus/` from `econ4210_climate_fall2026.tex`, copied here. |
 
 ## Structure
 
@@ -143,12 +144,17 @@ describe the calendar, which has not changed.
 
 ## Constraints
 
-`syllabus/econ4210_fall2026_public.tex` is the syllabus posted publicly under
-the USG rule. It stays near-constant across years. Course material does not go
-in it.
+`syllabus/econ4210_fall2026_public.tex` is the bare-minimum public syllabus
+the USG rule requires. It is entirely external to this repository: posted once
+a year at <https://syllabus.gatech.edu>, near-constant across years. Course
+material does not go in it and its PDF does not go in here.
 
 Year-to-year changes go in `index.html` and
 `syllabus/econ4210_climate_fall2026.tex`.
+
+The schedule and reading list live ONLY in `index.html`. The details PDF
+points at the site and repeats neither, so a schedule change is a one-file
+edit.
 
 Lecture decks are Keynote, exported to PDF for presenting; sources in
 `_teaching/FALL2026/ECON4210/slides/`. Decks are being converted to PowerPoint

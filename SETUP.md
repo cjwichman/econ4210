@@ -54,18 +54,22 @@ Small edits can be made on github.com without a local checkout: open
 `index.html`, click the pencil, commit. Useful from a phone or a borrowed
 machine.
 
-## The two PDFs
+## The syllabus PDF
 
-Both compile in `_teaching/FALL2026/ECON4210/syllabus/`. Neither is connected
-to the site beyond the links in the header.
+`econ4210_climate_fall2026.tex` compiles in
+`_teaching/FALL2026/ECON4210/syllabus/`. It is THE course syllabus: policies,
+grading, exam dates, planned course topics, and the book list. It does not
+contain the schedule or the reading list -- those live only in `index.html`,
+so a schedule change is a one-file edit. Its PDF is the "Syllabus (PDF)" chip
+on both pages, renamed `econ4210_fall2026_syllabus.pdf` in the repository.
 
-`econ4210_fall2026_public.tex` is the posted public syllabus. Leave it alone.
+After recompiling, copy the PDF into the repository, commit, push.
 
-`econ4210_climate_fall2026.tex` is the full syllabus with the schedule and
-readings.
-
-After recompiling either, copy the PDF into the repository (the full syllabus
-is renamed `econ4210_fall2026_syllabus.pdf`), commit, push.
+`econ4210_fall2026_public.tex`, in the same folder, is the bare-minimum
+public syllabus the USG rule requires. It is entirely external to the site:
+updated once a year and posted at
+<https://syllabus.gatech.edu/sites/default/files/2026-04/econ4210_fall2026_public.pdf>.
+Nothing from it enters the repository.
 
 ## Slides
 
@@ -89,8 +93,9 @@ Choose a tag → type `fall2026` → Create new tag → Publish release. The sta
 taught stays browsable from the Releases page.
 
 Then update dates and topics in `index.html`, including the `data-from` and
-`data-to` attributes on each week, recompile the syllabus, swap both PDFs in,
-push. The public syllabus normally needs only a date change.
+`data-to` attributes on each week, recompile the syllabus, swap its PDF in,
+push. The public syllabus is refreshed separately at syllabus.gatech.edu and
+normally needs only a date change.
 
 The Canvas chip in both page headers points at the term's course shell
 (`gatech.instructure.com/courses/<id>`). Canvas issues a new shell each
