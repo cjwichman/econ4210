@@ -255,6 +255,10 @@ a.ext:hover { background: #e7e4de; }
 .badge.resp { background: #f6ecc9; color: #6b551a; border: 1px solid #e6d59b; }
 .badge.disc { background: #edeef1; color: var(--slate); border: 1px solid #dcdfe5; }
 .badge.exam { background: #f3e4dc; color: #8a4b3a; border: 1px solid #e2c6b8; }
+.badge.game { background: #ece7f6; color: #5b4a8a; border: 1px solid #d9cfec; }
+.badge.game .ic { margin-right: 4px; vertical-align: -1px; }
+
+.gamenote { font-size: 0.94rem; margin: 0.2rem 0 1rem; }
 
 .aside { margin: 0.15rem 0 0 1rem; font-size: 0.89rem; color: var(--mute); font-style: italic; }
 
