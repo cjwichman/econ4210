@@ -4,9 +4,17 @@ export const GHOST_PATH = "M13.2 2C9.1 2 6 5.4 6 9.7v3.5c0 1.6-.6 2.7-2 3.6-1 .7
 export const GHOST_SVG = (size = 18, fill = "#6CC24A") => `<svg width="${size}" height="${size}" viewBox="0 0 24 24" aria-hidden="true"><path d="${GHOST_PATH}" fill="${fill}"/><ellipse cx="10.7" cy="9.7" rx="1.1" ry="1.5" fill="#1B2233"/><ellipse cx="15.2" cy="9.7" rx="1.1" ry="1.5" fill="#1B2233"/><ellipse cx="13" cy="13.8" rx="1.3" ry="2.1" fill="#1B2233"/></svg>`;
 const marker = (x, y, fill) => `<g transform="translate(${x},${y}) scale(0.6) translate(-12,-12)"><path d="${GHOST_PATH}" fill="${fill}"/><ellipse cx="10.7" cy="9.7" rx="1.1" ry="1.5" fill="#1B2233"/><ellipse cx="15.2" cy="9.7" rx="1.1" ry="1.5" fill="#1B2233"/><ellipse cx="13" cy="13.8" rx="1.3" ry="2.1" fill="#1B2233"/></g>`;
 
+export const TRADES = {
+  1: { trade: "Bakery", unit: "batches", blurb: "You run the borough's bakery. Ovens vent gently, so traps clip right on. Cheapest containment in the borough." },
+  2: { trade: "Laundry", unit: "loads", blurb: "You run the borough's laundry. Ghosts ride the steam, and filters catch most of them. Cheap containment." },
+  3: { trade: "Brewery", unit: "barrels", blurb: "You run the borough's brewery. Fermentation leaks, but traps fit the vents. Mid-priced containment." },
+  4: { trade: "Freight depot", unit: "truckloads", blurb: "You run the borough's freight depot. Ghosts escape on the road, where traps can't reach. Expensive containment." },
+  5: { trade: "Foundry", unit: "castings", blurb: "You run the borough's foundry. Ghosts pour off white-hot metal. Most expensive containment in the borough." },
+};
+
 export const KEY_ROWS = [
   ["Ghost emissions", "greenhouse gas emissions"],
-  ["Ghost concentration", "CO2 in the atmosphere (the stock)"],
+  ["Ghost concentration", "the stock of GHGs in the atmosphere"],
   ["The Ether", "global temperature"],
   ["Hauntings", "climate damages"],
   ["Containment", "abatement"],

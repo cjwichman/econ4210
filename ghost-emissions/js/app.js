@@ -2,7 +2,7 @@
 // The model never runs here. Previews come from the `preview` edge function.
 import { createClient } from "https://esm.sh/@supabase/supabase-js@2";
 import { SUPABASE_URL, SUPABASE_ANON_KEY, FUNCTIONS_URL } from "./config.js";
-import { GHOST_SVG, KEY_ROWS, drawMAC, drawEther, drawMap, drawLeaderboard } from "./ui.js";
+import { GHOST_SVG, KEY_ROWS, TRADES, drawMAC, drawEther, drawMap, drawLeaderboard } from "./ui.js";
 
 const sb = createClient(SUPABASE_URL, SUPABASE_ANON_KEY, { db: { schema: "ghost" } });
 const $ = s => document.querySelector(s);
@@ -19,12 +19,18 @@ async function callFn(name, body) {
 }
 
 // ---------- boot ----------
+let recovering = false, booted = false;
 async function boot() {
+  sb.auth.onAuthStateChange((e) => { if (e === "PASSWORD_RECOVERY") { recovering = true; if (booted) viewRecovery(); } });
+  const url = new URL(location.href);
+  if (url.searchParams.get("code")) { await sb.auth.exchangeCodeForSession(url.searchParams.get("code")).catch(() => {}); history.replaceState(null, "", url.pathname + "#firm"); recovering = true; }
   const { data: { session } } = await sb.auth.getSession();
   if (session) await loadMe();
+  booted = true;
+  if (recovering && session) return viewRecovery();
   route();
   window.addEventListener("hashchange", route);
-  sb.auth.onAuthStateChange(async (_e, s) => { if (s) { await loadMe(); } else { me = null; } route(); });
+  sb.auth.onAuthStateChange(async (e, sess) => { if (e === "PASSWORD_RECOVERY") return; if (!booted) return; if (sess && !me) { await loadMe(); route(); } else if (!sess && me) { me = null; cls = null; team = null; isInstructor = false; route(); } });
 }
 async function loadMe() {
   const { data: { user } } = await sb.auth.getUser();
@@ -69,7 +75,8 @@ function closesText(r) { return r?.closes_at ? "closes " + new Date(r.closes_at)
 
 // ---------- routes ----------
 async function route() {
-  if (location.hash.includes("type=recovery")) return viewRecovery();
+  if (!booted) return;
+  if (recovering) return viewRecovery();
   const h = (location.hash || "#firm").slice(1);
   const { data: { session } } = await sb.auth.getSession();
   if (session && !me && h !== "board") return viewJoin();
@@ -124,13 +131,14 @@ function viewJoin() {
   };
 }
 function viewRecovery() {
+  recovering = true;
   shell("signin", `<div class="auth card"><h2>Set a new password</h2><label class="lab">New password</label><input class="field" id="pw1" type="password"><label class="lab">Again</label><input class="field" id="pw2" type="password"><button class="btn" id="go">Save password</button><div id="msg"></div></div>`);
   $("#go").onclick = async () => {
     if ($("#pw1").value.length < 8) return $("#msg").innerHTML = `<div class="msg">Use at least 8 characters.</div>`;
     if ($("#pw1").value !== $("#pw2").value) return $("#msg").innerHTML = `<div class="msg">Passwords do not match.</div>`;
     const { error } = await sb.auth.updateUser({ password: $("#pw1").value });
     if (error) return $("#msg").innerHTML = `<div class="msg">${esc(error.message)}</div>`;
-    await loadMe(); history.replaceState(null, "", location.pathname + location.search); location.hash = isInstructor ? "#instructor" : "#firm";
+    recovering = false; await loadMe(); history.replaceState(null, "", location.pathname + location.search); location.hash = isInstructor ? "#instructor" : "#firm"; route();
   };
 }
 
@@ -143,60 +151,74 @@ async function viewFirm() {
   const closed = round.status !== "open";
   const q0 = mine?.q ?? 100, a0 = mine ? Number(mine.a) * 100 : 0;
   const prev = (await lastResolved(1))[0];
+  const T = TRADES[me.firm_type ?? 3] ?? TRADES[3];
   let policyLine = "No borough policy applies to you this round.";
   let policy = { kind: "none" };
   if (prev) {
-    const { data: bo } = await sb.from("borough_outcomes").select("data").eq("round_id", prev.id).eq("team_id", team.id).maybeSingle();
-    // the policy that applies this round is the borough's decision from the last resolved round
     const { data: bd } = await sb.from("borough_decisions").select("payload").eq("round_id", prev.id).eq("team_id", team.id).maybeSingle();
-    policy = bd?.payload?.policy ?? bo?.data?.decision?.policy ?? { kind: "none" };
+    policy = bd?.payload?.policy ?? { kind: "none" };
     if (policy.kind === "tax") policyLine = `${esc(team.name)} set a ghost tax of <b>${fmt(policy.tau)} per ton</b> last week. It applies to you this round.`;
     if (policy.kind === "cap") policyLine = `${esc(team.name)} capped ghosts at <b>${Math.round(policy.capTons)} t</b> for the borough. You get a permit allocation. The market sets your containment. You choose output.`;
     if (policy.kind === "standard") policyLine = `${esc(team.name)} requires every business to contain at least <b>${Math.round(policy.aMin * 100)}%</b> of its ghosts.`;
   }
   const showA = policy.kind !== "cap" && fcfg.sliders?.includes("a");
   const pill = policy.kind === "none" ? `<span class="pill grey">No policy yet</span>` : policy.kind === "tax" ? `<span class="pill ember">Tax: ${fmt(policy.tau)}/t</span>` : policy.kind === "cap" ? `<span class="pill ember">Cap in effect</span>` : `<span class="pill ember">Containment rule</span>`;
-  const firmName = me.firm_name ?? `${esc(me.display_name)}'s business`;
+  const bizName = me.firm_name ?? `${team.name} ${T.trade}`;
+  const etherReading = prev ? Number((await etherNow()) ?? 0).toFixed(2) : null;
 
-  shell("firm", `<div class="two"><div>
-    <div class="hdr"><div><div class="eyebrow">Round ${round.number} · ${closesText(round)}</div><h2>${esc(firmName)}</h2><div class="small">Type ${me.firm_type ?? "?"} business · ${esc(team.name)}</div></div>${pill}</div>
+  shell("firm", `
+    ${cfg.howto?.firm ? `<div class="howto-strip"><b>How to play this week.</b> ${cfg.howto.firm.split("\n").map(x => `<p>${esc(x)}</p>`).join("")}<p class="small">Your business details are further down the page.</p></div>` : ""}
+    <div class="two"><div>
+    <div class="hdr"><div><div class="eyebrow">Round ${round.number} · ${closesText(round)}</div><h2>${esc(bizName)}</h2><div class="small">${esc(T.trade)} · ${esc(team.name)}</div></div>${pill}</div>
     <div class="decision"><div class="eyebrow">This week's decision</div>
       <h3>${esc(fcfg.title ?? "How much to make, and how many ghosts to contain")}</h3>
       <p>${policyLine}</p>${fcfg.text ? `<p>${esc(fcfg.text)}</p>` : ""}
+      <div class="prehdr">This week, as chosen below</div>
+      <div class="preview"><div class="stat pos"><div class="eyebrow">Profit</div><div class="num" id="pv">…</div></div><div class="stat ecto"><div class="eyebrow">Ghosts released</div><div class="num" id="ev">…</div></div><div class="stat neg"><div class="eyebrow" id="cl">Total containment cost</div><div class="num" id="cv">…</div></div></div>
       <div class="slider"><div class="lab"><span>Output</span><span class="num" id="qv"></span></div><input type="range" id="q" min="0" max="100" value="${q0}" ${closed ? "disabled" : ""}></div>
       ${showA ? `<div class="slider"><div class="lab"><span>Containment</span><span class="num" id="av"></span></div><input type="range" id="a" min="0" max="100" value="${a0}" ${closed ? "disabled" : ""}></div>` : ""}
-      <div class="preview"><div class="stat pos"><div class="eyebrow">Profit</div><div class="num" id="pv">…</div></div><div class="stat ecto"><div class="eyebrow">Ghosts released</div><div class="num" id="ev">…</div></div><div class="stat neg"><div class="eyebrow" id="cl">Containment cost</div><div class="num" id="cv">…</div></div></div>
-      ${closed ? `<p class="small">This round is closed. Results Monday.</p>` : `<button class="btn" id="submit">${mine ? "Update" : "Submit"} for round ${round.number}</button><div class="small" style="text-align:center;margin-top:6px">You can change this until the round closes.</div>`}
+      ${closed ? `<p class="small">This round is closed. Results Monday.</p>` : `<button class="btn" id="submit">${mine ? "Update" : "Submit"} for round ${round.number}</button><div class="small" style="text-align:center;margin-top:6px">Submit by Sunday night. You can change it until then.</div>`}
       <div id="msg"></div></div>
-    <label class="lab">Note to your mayor (optional)</label><input class="field" id="note" maxlength="140" value="${esc(mine?.note ?? "")}" ${closed ? "disabled" : ""} placeholder="One line. Your mayor reads it next week.">
+    <label class="lab">Send a one-line note to your mayor for next week (optional)</label><input class="field" id="note" maxlength="140" value="${esc(mine?.note ?? "")}" ${closed ? "disabled" : ""}>
   </div><div>
     ${fcfg.chart ? `<div class="chart"><div id="mac"></div><div class="cap">Your marginal cost of containment. ${policy.kind === "tax" ? "Where it crosses the tax line, one more ton contained costs the same as one more ton taxed." : ""}</div></div>` : ""}
-    ${drawer("Your business", `<dl class="kv"><dt>Type</dt><dd>${me.firm_type ?? "?"} of 5. ${["", "Cheapest containment in the borough.", "Cheap containment.", "Middle of the pack on containment cost.", "Expensive containment.", "Most expensive containment in the borough."][me.firm_type ?? 3]}</dd><dt>Ghosts per unit</dt><dd>0.2 t before containment.</dd><dt>Margin</dt><dd>$30 per unit before ghosts.</dd><dt>Containment</dt><dd>Cheap for the first few ghosts, expensive for the last few.</dd></dl>`, round.number <= 1)}
-    ${drawer("Forecast for next round", `<p>What will the Ether read next Monday?${prev ? ` Current reading ${Number((await etherNow()) ?? 0).toFixed(2)}.` : ""}</p><input class="field" id="fc" type="number" step="0.01" min="0" max="4" value="${mine?.forecast ?? ""}" ${closed ? "disabled" : ""} placeholder="e.g. 0.75"><p class="small">Closest forecasts get a mention.</p>`)}
     ${cfg.briefing?.firm ? drawer("From the Institute", `<div class="brief">${cfg.briefing.firm.split("\n").map(p => `<p>${esc(p)}</p>`).join("")}</div>`, true) : ""}
+    ${drawer("Forecast for next round", `<p>What will the Ether read next Monday?${etherReading ? ` The current reading is ${etherReading}.` : ""}</p><input class="field" id="fc" type="number" step="0.01" min="0" max="4" value="${mine?.forecast ?? ""}" ${closed ? "disabled" : ""} placeholder="e.g. 0.75">`)}
+    ${drawer("Your business", `<dl class="kv"><dt>Trade</dt><dd>${esc(T.blurb)}</dd><dt>Ghosts</dt><dd>Your business releases 0.2 t of ghosts per ${esc(T.unit.replace(/s$/, ""))} before containment.</dd><dt>Margin</dt><dd>$30 per ${esc(T.unit.replace(/s$/, ""))} before ghosts.</dd><dt>Containment</dt><dd>Cheap for the first few ghosts, expensive for the last few.</dd></dl>`, round.number <= 1)}
     ${keyDrawer(policy.kind === "tax" ? [["Ghost tax", "carbon tax"]] : policy.kind === "cap" ? [["Cap", "cap and trade"]] : [])}
-    ${cfg.howto?.firm ? drawer("How to play this week", cfg.howto.firm.split("\n").map(p => `<p>${esc(p)}</p>`).join("")) : ""}
   </div></div>`);
 
   const ghostMult = team.params.ghostMult ?? 1;
-  const upd = debounce(async () => {
+  const slope = 200 * (me.firm_type ?? 3) * (team.params.techMult ?? 1);
+  const local = () => {
     const q = +$("#q").value, a = showA ? +$("#a").value / 100 : 0;
-    $("#qv").textContent = q + " units"; if (showA) $("#av").textContent = Math.round(a * 100) + "% of ghosts";
-    if (policy.kind !== "cap") $("#ev").textContent = (0.2 * q * ghostMult * (1 - a)).toFixed(1) + " t";
-    const r = await callFn("preview", { roundId: round.id, kind: "firm", q, a });
-    if (!r.ok) { $("#msg").innerHTML = `<div class="msg">${esc(r.error)}</div>`; return; }
+    $("#qv").textContent = q + " " + T.unit; if (showA) $("#av").textContent = Math.round(a * 100) + "% of ghosts";
+    if (policy.kind === "cap") return { q, a };
+    const base = 0.2 * q * ghostMult, ghosts = base * (1 - a), cont = 0.5 * slope * a * a * base;
+    const tax = policy.kind === "tax" ? (policy.tau ?? 0) * ghosts : 0;
+    const profit = 30 * q - cont - tax;
+    $("#ev").textContent = ghosts.toFixed(1) + " t";
+    if (policy.kind === "tax") { $("#cl").textContent = "Tax bill"; $("#cv").textContent = fmt(tax); } else { $("#cl").textContent = "Total containment cost"; $("#cv").textContent = fmt(cont); }
+    $("#pv").textContent = fmt(profit); $("#pv").parentElement.className = "stat " + (profit < 0 ? "neg" : "pos");
+    if (fcfg.chart) $("#mac").innerHTML = drawMAC({ type: me.firm_type ?? 3, a, price: policy.kind === "tax" ? policy.tau : null, slope, label: "tax" });
+    return { q, a };
+  };
+  const serverConfirm = debounce(async () => {
+    if (policy.kind !== "cap") return;
+    const q = +$("#q").value;
+    const r = await callFn("preview", { roundId: round.id, kind: "firm", q, a: 0 });
+    if (!r.ok) return;
     $("#pv").textContent = fmt(r.firm.profit); $("#pv").parentElement.className = "stat " + (r.firm.profit < 0 ? "neg" : "pos");
     $("#ev").textContent = r.firm.ghosts.toFixed(1) + " t";
-    if (r.policy.kind === "tax") { $("#cl").textContent = "Tax bill"; $("#cv").textContent = fmt(r.firm.taxBill); }
-    else if (r.policy.kind === "cap") { $("#cl").textContent = r.firm.permitBill >= 0 ? "Permits bought" : "Permits sold"; $("#cv").textContent = fmt(Math.abs(r.firm.permitBill)); }
-    else { $("#cl").textContent = "Containment cost"; $("#cv").textContent = fmt(r.firm.contCost); }
-    if (fcfg.chart) $("#mac").innerHTML = drawMAC({ type: me.firm_type ?? 3, a: r.firm.a, price: r.policy.kind === "tax" ? r.policy.tau : r.policy.kind === "cap" ? r.policy.permitPrice : null, slope: 200 * (me.firm_type ?? 3), label: r.policy.kind === "tax" ? "tax" : "permit price" });
-  }, 120);
+    $("#cl").textContent = r.firm.permitBill >= 0 ? "Permits bought" : "Permits sold"; $("#cv").textContent = fmt(Math.abs(r.firm.permitBill));
+    if (fcfg.chart) $("#mac").innerHTML = drawMAC({ type: me.firm_type ?? 3, a: r.firm.a, price: r.policy.permitPrice, slope, label: "permit price" });
+  }, 150);
+  const upd = () => { local(); serverConfirm(); };
   $("#q").oninput = upd; if (showA) $("#a").oninput = upd; upd();
   $("#submit")?.addEventListener("click", async () => {
-    const row = { round_id: round.id, student_id: me.id, q: +$("#q").value, a: showA ? +$("#a").value / 100 : 0, note: $("#note").value || null, forecast: $("#fc").value === "" ? null : +$("#fc").value, submitted_at: new Date().toISOString() };
+    const row = { round_id: round.id, student_id: me.id, q: +$("#q").value, a: showA ? +$("#a").value / 100 : 0, note: $("#note").value || null, forecast: $("#fc").value === "" ? null : +$("#fc").value, extra: { ...(mine?.extra ?? {}), suggestion_only: false }, submitted_at: new Date().toISOString() };
     const { error } = await sb.from("firm_decisions").upsert(row);
-    $("#msg").innerHTML = `<div class="msg ${error ? "" : "ok"}">${error ? esc(error.message) : "Submitted. You can still change it until the round closes."}</div>`;
+    $("#msg").innerHTML = `<div class="msg ${error ? "" : "ok"}">${error ? esc(error.message) : "Submitted. You can change it until Sunday night."}</div>`;
     if (!error) $("#submit").textContent = `Update for round ${round.number}`;
   });
 }
@@ -222,12 +244,15 @@ async function viewBorough() {
     const { data: ro } = await sb.from("round_outcomes").select("totals").eq("round_id", prev.id).maybeSingle();
     const sc = ro?.totals?.scores; if (sc) { const order = Object.entries(sc).sort((a, b) => b[1].score - a[1].score).map(x => x[0]); rank = order.indexOf(team.id) + 1; }
   }
+  // teammates' suggestions for this round
+  const { data: sugRows } = await sb.from("firm_decisions").select("student_id, extra").eq("round_id", round.id).in("student_id", teammates.map(t => t.id));
+  const suggestions = (sugRows ?? []).filter(r => r.extra?.suggestion != null && r.student_id !== minId).map(r => ({ name: teammates.find(t => t.id === r.student_id)?.display_name ?? "?", v: r.extra.suggestion }));
   const p = team.params;
   const exposureWord = p.exposure >= 0.2 ? "High" : p.exposure >= 0.12 ? "Above average" : p.exposure >= 0.08 ? "Average" : "Low";
+  const trapWord = (p.techMult ?? 1) < 1 ? "Ghost traps cost less than the city average here." : (p.techMult ?? 1) > 1 ? "Ghost traps cost more than the city average here." : "Ghost traps cost about the city average here.";
 
-  // decision UI by type
   const decisionUI = {
-    target: () => `<div class="slider"><div class="lab"><span>Borough containment target</span><span class="num" id="tv"></span></div><input type="range" id="target" min="0" max="100" value="${Math.round((payload.target ?? 0) * 100)}"></div><p class="small">A target is a shared goal for your businesses this week. It becomes binding only if you pick a policy tool later in the semester.</p>`,
+    target: () => `<div class="slider"><div class="lab"><span>Borough containment target</span><span class="num" id="tv"></span></div><input type="range" id="target" min="0" max="100" value="${Math.round((payload.target ?? 0) * 100)}"></div><p class="small">The share of your borough's ghosts you are aiming to contain. A goal, not a rule: nothing forces your businesses to hit it. Policy tools with teeth arrive later in the semester.</p>`,
     rate: () => `<div class="slider"><div class="lab"><span>Discount rate</span><span class="num" id="rv"></span></div><input type="range" id="rate" min="2" max="7" step="0.5" value="${payload.discountRate != null ? payload.discountRate * 100 : 3}"></div><p class="small">Locked for the rest of the semester once the round closes. A low rate values future hauntings almost as much as today's. A high rate discounts them.</p>`,
     instrument: () => `<div class="seg" id="kind"><button data-k="tax" class="${payload.policy?.kind === "tax" ? "on" : ""}">Ghost tax</button><button data-k="cap" class="${payload.policy?.kind === "cap" ? "on" : ""}">Cap on ghosts</button><button data-k="standard" class="${payload.policy?.kind === "standard" ? "on" : ""}">Containment rule</button></div>
       <div id="tax" style="display:none"><div class="slider"><div class="lab"><span>Tax per ton</span><span class="num" id="tauv"></span></div><input type="range" id="tau" min="0" max="300" step="10" value="${payload.policy?.tau ?? 100}"></div></div>
@@ -241,25 +266,28 @@ async function viewBorough() {
     const b = payload.budget ?? {}; const rows = [["subsidy", "Trap subsidy", "Pays businesses per ton contained."], ["rd", "Trap R&D", "Lowers containment cost next round."], ["defense", "Haunting defense", "Reduces hauntings this round."], ["reserve", "Reserve", "Unspent."]];
     return `<div class="eyebrow">Borough budget · ${fmt(0.2 * p.income)} this round</div>` + rows.map(([k, l, t]) => `<div class="slider"><div class="lab"><span>${l} <span class="small">${t}</span></span><span class="num" id="${k}v">${Math.round((b[k] ?? (k === "reserve" ? 1 : 0)) * 100)}%</span></div><input type="range" class="bud" id="${k}" min="0" max="100" value="${Math.round((b[k] ?? (k === "reserve" ? 1 : 0)) * 100)}"></div>`).join("") + `<div class="small" id="budsum"></div>`;
   }
-  const types = (bcfg.type ?? "target").split("+");   // e.g. "instrument+budget"
-  shell("borough", `<div class="two"><div>
-    <div class="hdr"><div><div class="eyebrow">Round ${round.number} · ${closesText(round)}</div><h2>${esc(team.name)}</h2><div class="small">Mayor this week: <b>${esc(minister?.display_name ?? "—")}</b>${nextMin ? ` · next: ${esc(nextMin.display_name)}` : ""}</div></div>${rank ? `<span class="pill haunt">${rank}${["th", "st", "nd", "rd"][rank % 10 > 3 || [11, 12, 13].includes(rank) ? 0 : rank % 10]} of ${teammates.length ? 9 : 9}</span>` : ""}</div>
-    <div class="decision"><div class="eyebrow">This week's decision · mayor submits</div><h3>${esc(bcfg.title ?? "Set a containment target")}</h3>${bcfg.text ? `<p>${esc(bcfg.text)}</p>` : ""}
+  const types = (bcfg.type ?? "target").split("+");
+  shell("borough", `
+    ${cfg.howto?.borough ? `<div class="howto-strip"><b>How to play this week.</b> ${cfg.howto.borough.split("\n").map(x => `<p>${esc(x)}</p>`).join("")}</div>` : ""}
+    <div class="two"><div>
+    <div class="hdr"><div><div class="eyebrow">Round ${round.number} · ${closesText(round)}</div><h2>${esc(team.name)}</h2><div class="small">Mayor this week: <b>${esc(minister?.display_name ?? "—")}</b>${nextMin ? ` · next: ${esc(nextMin.display_name)}` : ""}</div></div>${rank ? `<span class="pill haunt">${rank}${["th", "st", "nd", "rd"][rank % 10 > 3 || [11, 12, 13].includes(rank) ? 0 : rank % 10]} of 9</span>` : ""}</div>
+    <div class="decision"><div class="eyebrow">This week's decision · ${iAmMinister ? "you are the mayor" : `${esc(minister?.display_name ?? "the mayor")} submits`}</div><h3>${esc(bcfg.title ?? "Set a containment target")}</h3>${bcfg.text ? `<p>${esc(bcfg.text)}</p>` : ""}
+      <div class="prehdr">Expectations for next week</div>
+      <div class="preview"><div class="stat ecto"><div class="eyebrow">Ghosts released</div><div class="num" id="bev">…</div></div><div class="stat pos"><div class="eyebrow" id="bl2">Revenue</div><div class="num" id="brv">…</div></div><div class="stat haunt"><div class="eyebrow">Haunting damages</div><div class="num" id="bhv">…</div></div></div>
       ${types.map(t => decisionUI[t]?.() ?? "").join("<div style='height:8px'></div>")}
-      <div class="preview"><div class="stat ecto"><div class="eyebrow">Ghosts (expected)</div><div class="num" id="bev">…</div></div><div class="stat pos"><div class="eyebrow" id="bl2">Revenue</div><div class="num" id="brv">…</div></div><div class="stat haunt"><div class="eyebrow">Hauntings (exp.)</div><div class="num" id="bhv">…</div></div></div>
-      ${closed ? `<p class="small">Round closed.</p>` : `<button class="btn" id="submit" ${iAmMinister ? "" : "disabled"}>${iAmMinister ? "Submit as mayor" : `Only ${esc(minister?.display_name ?? "the mayor")} can submit`}</button><button class="btn ghost" id="draft">Save a draft for the team</button>`}
+      ${suggestions.length && iAmMinister ? `<div class="tally"><b>Suggestions from your team:</b> ${suggestions.map(x => `${esc(x.name)}: ${esc(String(x.v))}`).join(" · ")}</div>` : ""}
+      ${closed ? `<p class="small">Round closed.</p>` : iAmMinister ? `<button class="btn" id="submit">Submit as mayor</button>` : `<button class="btn" disabled>Only ${esc(minister?.display_name ?? "the mayor")} can submit this week</button><button class="btn ghost" id="suggest">Send this to the mayor as your suggestion</button>`}
+      ${!closed ? `<button class="btn ghost" id="draft">Save a draft for the team</button>` : ""}
       <div id="msg"></div>${bd ? `<p class="small">${bd.is_draft ? "Draft" : "Submitted"} ${new Date(bd.submitted_at).toLocaleString()}</p>` : ""}</div>
   </div><div>
     ${bcfg.chart ? `<div class="chart"><div id="bmac"></div><div class="cap">${esc(team.name)}'s marginal cost of containment against what one more ghost costs the whole city.</div></div>` : ""}
-    ${drawer("Your businesses last week", lastFirms.length ? `<table><tr><th>Business</th><th>Type</th><th>Contained</th><th>Profit</th><th>Note</th></tr>${lastFirms.map(f => `<tr><td>${esc(f.s?.firm_name ?? f.s?.display_name)}</td><td class="num">${f.data.type}</td><td class="num">${Math.round(f.data.a * 100)}%</td><td class="num">${fmt(f.data.profit)}</td><td class="noteq">${esc(f.note ?? "—")}</td></tr>`).join("")}</table>` : `<p class="small">No results yet.</p>`, true)}
-    ${drawer(`${esc(team.name)}'s card`, `<p class="small">${esc(p.blurb ?? "")}</p><dl class="kv"><dt>Income</dt><dd>${fmt(p.income)} a week.</dd><dt>Exposure</dt><dd>${exposureWord}. Hauntings cost ${esc(team.name)} about ${(p.exposure / 0.13).toFixed(1)}x the city average per point of Ether, relative to income.</dd><dt>Ghosts</dt><dd>${Math.round(20 * (p.ghostMult ?? 1))} t per business at full output (city average 20 t).</dd><dt>Traps</dt><dd>${(p.techMult ?? 1) < 1 ? "Cheaper than average." : (p.techMult ?? 1) > 1 ? "More expensive than average." : "Average cost."}</dd></dl>`)}
-    ${lastB ? drawer("Last week", `<dl class="kv"><dt>Ghosts</dt><dd>${Math.round(lastB.data.ghosts)} t</dd><dt>Hauntings</dt><dd>${fmt(lastB.data.hauntings)}</dd><dt>Welfare</dt><dd>${fmt(lastB.data.welfare)}</dd>${lastB.data.permitPrice != null ? `<dt>Permit price</dt><dd>${fmt(lastB.data.permitPrice)}/t</dd>` : ""}</dl>`) : ""}
+    ${drawer("Your businesses last week", lastFirms.length ? `<table><tr><th>Business</th><th>Contained</th><th>Profit</th><th>Note</th></tr>${lastFirms.map(f => `<tr><td>${esc(f.s?.firm_name ?? ((TRADES[f.data.type] ?? {}).trade ?? f.s?.display_name))}<div class="small">${esc(f.s?.display_name ?? "")}</div></td><td class="num">${Math.round(f.data.a * 100)}%</td><td class="num">${fmt(f.data.profit)}</td><td class="noteq">${esc(f.note ?? "—")}</td></tr>`).join("")}</table>` : `<p class="small">No results yet.</p>`, true)}
     ${cfg.briefing?.student ? drawer("From the Institute", `<div class="brief">${cfg.briefing.student.split("\n").map(x => `<p>${esc(x)}</p>`).join("")}</div>`, true) : ""}
+    ${lastB ? drawer("Last week's results", `<dl class="kv"><dt>Ghosts</dt><dd>${Math.round(lastB.data.ghosts)} t</dd><dt>Hauntings</dt><dd>${fmt(lastB.data.hauntings)}</dd><dt>Welfare</dt><dd>${fmt(lastB.data.welfare)}</dd>${lastB.data.permitPrice != null ? `<dt>Permit price</dt><dd>${fmt(lastB.data.permitPrice)}/t</dd>` : ""}</dl>`) : ""}
+    ${drawer(`${esc(team.name)}'s stats`, `<p class="small">${esc(p.blurb ?? "")}</p><dl class="kv"><dt>Income</dt><dd>${fmt(p.income)} a week.</dd><dt>Exposure</dt><dd>${exposureWord}. Hauntings cost ${esc(team.name)} about ${(p.exposure / 0.13).toFixed(1)}x the city average per point of Ether, relative to income.</dd><dt>Ghosts</dt><dd>${Math.round(20 * (p.ghostMult ?? 1))} t per business at full output (city average 20 t).</dd><dt>Traps</dt><dd>${trapWord}</dd></dl>`)}
     ${keyDrawer([["Ghost tax", "carbon tax"], ["Cap on ghosts", "cap and trade"], ["Containment rule", "performance standard"], ["Exposure", "damage sensitivity"]])}
-    ${cfg.howto?.borough ? drawer("How to play this week", cfg.howto.borough.split("\n").map(x => `<p>${esc(x)}</p>`).join("")) : ""}
   </div></div>`);
 
-  // wiring
   let kind = payload.policy?.kind && payload.policy.kind !== "none" ? payload.policy.kind : "tax";
   const showKind = () => ["tax", "cap", "standard"].forEach(k => { const el = $("#" + k); if (el) el.style.display = k === kind ? "block" : "none"; });
   document.querySelectorAll("#kind button").forEach(b => b.onclick = () => { kind = b.dataset.k; document.querySelectorAll("#kind button").forEach(x => x.classList.toggle("on", x === b)); showKind(); upd(); });
@@ -275,6 +303,14 @@ async function viewBorough() {
     if (types.includes("budget")) { const b = {}; document.querySelectorAll(".bud").forEach(el => b[el.id] = +el.value / 100); out.budget = b; }
     return out;
   }
+  function suggestionValue(pl) {
+    if (types.includes("instrument")) return pl.policy.kind === "tax" ? `tax $${pl.policy.tau}` : pl.policy.kind === "cap" ? `cap ${pl.policy.capTons} t` : `rule ${Math.round(pl.policy.aMin * 100)}%`;
+    if (types.includes("yesno")) return pl.choice ?? "—";
+    if (types.includes("vote")) return `$${pl.vote}`;
+    if (types.includes("rate")) return `${(pl.discountRate * 100).toFixed(1)}%`;
+    if (types.includes("target")) return `${Math.round(pl.target * 100)}%`;
+    return "see draft";
+  }
   const upd = debounce(async () => {
     const pl = collect();
     if ($("#tv")) $("#tv").textContent = Math.round(pl.target * 100) + "%";
@@ -284,10 +320,17 @@ async function viewBorough() {
     if ($("#aminv")) $("#aminv").textContent = $("#aMin").value + "%";
     if ($("#votev")) $("#votev").textContent = (bcfg.votePrefix ?? "$") + $("#vote").value;
     document.querySelectorAll(".bud").forEach(el => $("#" + el.id + "v").textContent = el.value + "%");
-    if ($("#budsum")) { const s = [...document.querySelectorAll(".bud")].reduce((t, el) => t + +el.value, 0); $("#budsum").textContent = s === 100 ? "Adds to 100." : `Adds to ${s}. Must be 100.`; $("#budsum").style.color = s === 100 ? "var(--ok)" : "var(--ember)"; }
+    if ($("#budsum")) { const t = [...document.querySelectorAll(".bud")].reduce((t2, el) => t2 + +el.value, 0); $("#budsum").textContent = t === 100 ? "Adds to 100." : `Adds to ${t}. Must be 100.`; $("#budsum").style.color = t === 100 ? "var(--ok)" : "var(--ember)"; }
+    // preview: a target projects "if your businesses hit this"
+    if (types.includes("target") && !types.includes("instrument")) {
+      const base = teammates.length * 20 * (p.ghostMult ?? 1);
+      $("#bev").textContent = Math.round(base * (1 - pl.target)) + " t";
+      $("#bl2").textContent = "Business profits";
+    }
     const r = await callFn("preview", { roundId: round.id, kind: "borough", payload: pl });
     if (!r.ok) return;
-    $("#bev").textContent = Math.round(r.ghosts) + " t"; $("#bhv").textContent = fmt(r.hauntings);
+    if (!(types.includes("target") && !types.includes("instrument"))) { $("#bev").textContent = Math.round(r.ghosts) + " t"; }
+    $("#bhv").textContent = fmt(r.hauntings);
     if (r.permitPrice != null && pl.policy?.kind === "cap") { $("#bl2").textContent = "Permit price"; $("#brv").textContent = fmt(r.permitPrice) + "/t"; }
     else if (pl.policy?.kind === "tax") { $("#bl2").textContent = "Tax revenue"; $("#brv").textContent = fmt(r.taxRevenue); }
     else { $("#bl2").textContent = "Business profits"; $("#brv").textContent = fmt(r.profits); }
@@ -302,6 +345,13 @@ async function viewBorough() {
   };
   $("#submit")?.addEventListener("click", () => save(false));
   $("#draft")?.addEventListener("click", () => save(true));
+  $("#suggest")?.addEventListener("click", async () => {
+    const v = suggestionValue(collect());
+    const { data: mine2 } = await sb.from("firm_decisions").select("*").eq("round_id", round.id).eq("student_id", me.id).maybeSingle();
+    const row = mine2 ? { ...mine2, extra: { ...(mine2.extra ?? {}), suggestion: v } } : { round_id: round.id, student_id: me.id, q: 100, a: 0, extra: { suggestion: v, suggestion_only: true } };
+    const { error } = await sb.from("firm_decisions").upsert(row);
+    $("#msg").innerHTML = `<div class="msg ${error ? "" : "ok"}">${error ? esc(error.message) : `Suggestion sent to the mayor: ${esc(v)}.`}</div>`;
+  });
 }
 
 // ---------- public dashboard ----------
@@ -357,6 +407,7 @@ async function viewInstructor() {
       ${lastRes ? `<div>Round ${lastRes.number} resolved ${new Date(lastRO?.resolved_at ?? Date.now()).toLocaleDateString()}</div>` : ""}
       ${cur && cur.status === "open" ? `<button class="btn sm ghost" id="close">Close round ${cur.number} now</button>` : ""}
       ${cur && cur.status === "closed" ? `<button class="btn sm" id="resolve">Resolve round ${cur.number}</button><button class="btn sm ghost" id="reopen">Re-open</button>` : ""}
+      ${lastRes ? `<button class="btn sm ghost" id="undo">Undo resolve of round ${lastRes.number}</button>` : ""}
       <a class="btn sm ghost" href="#board" style="text-decoration:none">Open the dashboard</a>
       ${cur ? `<button class="btn sm ghost" id="resetround">Reset round ${cur.number}</button>` : ""}${lastRes && !cur ? `<button class="btn sm ghost" id="resetlast">Reset round ${lastRes.number}</button>` : ""}
       <button class="btn sm ghost" id="csv">Export participation (CSV)</button>
@@ -379,6 +430,7 @@ async function viewInstructor() {
     $("#msg").innerHTML = `<div class="msg ${error ? "" : "ok"}">${error ? esc(error.message) : `Round ${r.number} reset and reopened.`}</div>`; if (!error) setTimeout(route, 600);
   };
   $("#resetround")?.addEventListener("click", () => resetRound(cur));
+  $("#undo")?.addEventListener("click", () => resetRound(lastRes));
   $("#resetlast")?.addEventListener("click", () => resetRound(lastRes));
   $("#resetclass")?.addEventListener("click", async () => {
     if ($("#rc_code").value.trim() !== cls.code) return $("#rcmsg").innerHTML = `<div class="msg">Class code does not match.</div>`;
