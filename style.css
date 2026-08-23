@@ -325,3 +325,7 @@ footer {
 .legend-game { display: inline-flex; align-items: center; font: 600 0.66rem/1 var(--mono); letter-spacing: 0.08em; text-transform: uppercase; color: #7a68a6; }
 .gamenote a.ext { background: #ece7f6; color: #5b4a8a; }
 .gamenote a.ext:hover { background: #ded5f0; }
+
+a.badge, a.tag { border-bottom: 0; }
+a.badge.disc:hover { background: #e0e2e8; color: var(--ink); }
+a.tag.legend-game:hover, .bucket.game a.tag:hover { color: #5b4a8a; }
