@@ -27,8 +27,8 @@
   <p class="sub">ECON 4210 — everything posted so far</p>
   <p class="docs">
     <a href="index.html">Schedule</a>
-    <a href="econ4210_fall2026_syllabus.pdf">Syllabus (PDF)</a>
-    <a href="https://gatech.instructure.com/courses/546640">Canvas</a>
+    <a href="econ4210_fall2026_syllabus.pdf" target="_blank" rel="noopener">Syllabus (PDF)</a>
+    <a href="https://gatech.instructure.com/courses/546640" target="_blank" rel="noopener">Canvas</a>
   </p>
 </header>
 
@@ -82,7 +82,7 @@ function render(folder, boxId, countId) {
       }
 
       box.innerHTML = files.map(function (f) {
-        return '<a href="' + folder + '/' + f.name + '">'
+        return '<a href="' + folder + '/' + f.name + '" target="_blank" rel="noopener">'
              + '<span class="fn">' + f.name + '</span>'
              + '<span class="sz">' + size(f.size) + '</span></a>';
       }).join('');
@@ -91,7 +91,7 @@ function render(folder, boxId, countId) {
     })
     .catch(function () {
       box.innerHTML = '<p class="status err">Could not load the file list. '
-        + 'Browse it directly at <a href="https://github.com/' + REPO
+        + 'Browse it directly at <a target="_blank" rel="noopener" href="https://github.com/' + REPO
         + '/tree/main/' + folder + '">github.com/' + REPO + '/' + folder + '</a>.</p>';
     });
 }

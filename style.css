@@ -316,3 +316,12 @@ footer {
 .bucket.extras li { margin-bottom: 0.4rem; font-size: 0.92rem; }
 .bucket.extras li::marker { color: var(--faint); }
 .legend-extras { display: inline-flex; align-items: center; font: 600 0.66rem/1 var(--mono); letter-spacing: 0.08em; text-transform: uppercase; color: #7a68a6; }
+
+.bucket.game { border-left-color: #b3a5d6; }
+.bucket.game .tag { color: #7a68a6; }
+.bucket.game ul { margin: 0; padding-left: 1.05rem; }
+.bucket.game li { margin-bottom: 0.4rem; font-size: 0.92rem; }
+.bucket.game li::marker { color: var(--faint); }
+.legend-game { display: inline-flex; align-items: center; font: 600 0.66rem/1 var(--mono); letter-spacing: 0.08em; text-transform: uppercase; color: #7a68a6; }
+.gamenote a.ext { background: #ece7f6; color: #5b4a8a; }
+.gamenote a.ext:hover { background: #ded5f0; }
