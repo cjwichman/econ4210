@@ -330,3 +330,10 @@ footer {
 a.badge, a.tag { border-bottom: 0; }
 a.badge.disc:hover { background: #e0e2e8; color: var(--ink); }
 a.tag.legend-game:hover, .bucket.game a.tag:hover { color: #5b4a8a; }
+
+/* --------------------------------------------------------- interactive apps */
+.bucket.app { border-left-color: var(--clay); display: flex; align-items: center;
+              flex-wrap: wrap; gap: 0.5rem 0.75rem; }
+.bucket.app .tag { color: var(--clay); margin-bottom: 0; }
+.chip.app { border-color: #c9dcdf; background: #eef5f6; color: #2a5a62; line-height: 1.35; }
+.chip.app:hover { background: #e2eef0; border-color: var(--clay); }
