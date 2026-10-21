@@ -17,6 +17,59 @@ const debounce = (f, ms) => { let t; return (...a) => { clearTimeout(t); t = set
 
 let me = null, cls = null, team = null, teammates = [], round = null, isInstructor = false;
 
+// ---------- view as a student (instructor only) ----------
+// Renders the real student views with me/team/teammates pointed at another
+// student, so the screen shows what that student sees. Every write is blocked:
+// fd_admin and bd_admin are `for all`, so the database would otherwise accept a
+// decision submitted from here.
+let asStudent = null, projectMode = false, roundOverride = null;
+let selfMe = null, selfTeam = null, selfTeammates = null;
+const viewingAs = () => asStudent !== null;
+function whoLabel() {
+  if (viewingAs() && projectMode) return "Viewing a business";
+  return me?.display_name ?? "";
+}
+// A student's name never goes on the projector. Fall back to the trade.
+function personLabel(s) {
+  if (!projectMode) return s?.display_name ?? "a student";
+  const t = TRADES[s?.firm_type ?? 3] ?? TRADES[3];
+  return "the " + String(t.trade).toLowerCase();
+}
+// A renamed business can identify its owner, so projection shows the default
+// "<Borough> <Trade>" pattern rather than whatever the student typed.
+function bizLabelFor(s, type) {
+  const t = TRADES[s?.firm_type ?? type ?? 3] ?? TRADES[3];
+  const dflt = `${team?.name ?? ""} ${t.trade}`.trim();
+  return projectMode ? dflt : (s?.firm_name ?? dflt);
+}
+function cornerMarker() {
+  let el = document.getElementById("vamark");
+  if (!viewingAs()) { el?.remove(); return; }
+  if (!el) { el = document.createElement("div"); el.id = "vamark"; document.body.appendChild(el); }
+  el.setAttribute("style", "position:fixed;right:10px;bottom:8px;z-index:9999;font:11px/1.5 system-ui,-apple-system,sans-serif;color:#7c8694;background:rgba(255,255,255,.8);padding:2px 7px;border-radius:4px;pointer-events:none");
+  el.textContent = projectMode ? "view as · read only" : `view as ${asStudent.display_name} · read only`;
+}
+async function viewAs(studentId) {
+  if (!isInstructor) return;
+  if (selfMe === null) { selfMe = me; selfTeam = team; selfTeammates = teammates; }
+  const { data: st } = await sb.from("students").select("*").eq("id", studentId).maybeSingle();
+  if (!st) return;
+  asStudent = st; me = st; team = null; teammates = [];
+  if (st.team_id) {
+    ({ data: team } = await sb.from("teams").select("*").eq("id", st.team_id).single());
+    ({ data: teammates } = await sb.from("students").select("*").eq("team_id", st.team_id).eq("active", true).order("minister_order"));
+  }
+  cornerMarker();
+  if (location.hash === "#firm") route(); else location.hash = "#firm";
+}
+function stopViewingAs() {
+  if (!viewingAs()) return;
+  asStudent = null; projectMode = false; roundOverride = null;
+  me = selfMe; team = selfTeam; teammates = selfTeammates;
+  selfMe = null; selfTeam = null; selfTeammates = null;
+  cornerMarker();
+}
+
 async function callFn(name, body) {
   const { data: { session } } = await sb.auth.getSession();
   const r = await fetch(`${FUNCTIONS_URL}/${name}`, { method: "POST", headers: { "Content-Type": "application/json", apikey: SUPABASE_ANON_KEY, Authorization: `Bearer ${session?.access_token ?? SUPABASE_ANON_KEY}` }, body: JSON.stringify(body) });
@@ -79,11 +132,11 @@ async function signOut() {
 }
 
 function shell(active, inner) {
-  const nav = me && !isInstructor ? [["firm", "My business"], ["borough", "My borough"], ["board", "The city"]] : isInstructor ? [["board", "The city"], ["instructor", "Instructor"]] : [["board", "The city"]];
+  const nav = viewingAs() ? [["firm", "My business"], ["borough", "My borough"], ["board", "The city"], ["instructor", "Back to instructor"]] : me && !isInstructor ? [["firm", "My business"], ["borough", "My borough"], ["board", "The city"]] : isInstructor ? [["board", "The city"], ["instructor", "Instructor"]] : [["board", "The city"]];
   $("#app").innerHTML = `
   <div class="appbar"><a class="brand" href="#board">${GHOST_SVG(18)} Ghost Emissions</a>
     <nav>${nav.map(([k, l]) => `<a href="#${k}" class="${active === k ? "on" : ""}">${l}</a>`).join("")}</nav>
-    <span class="who">${me ? `${esc(me.display_name)}${team ? " · " + esc(team.name) : ""} <a href="#" id="signout">Sign out</a>` : hasSession ? `<a href="#" id="signout">Sign out</a>` : `<a href="#signin">Sign in</a>`}</span></div>
+    <span class="who">${me ? `${esc(whoLabel())}${team ? " · " + esc(team.name) : ""} <a href="#" id="signout">Sign out</a>` : hasSession ? `<a href="#" id="signout">Sign out</a>` : `<a href="#signin">Sign in</a>`}</span></div>
   <div class="wrap">${inner}</div>`;
   $("#signout")?.addEventListener("click", async e => { e.preventDefault(); await signOut(); });
 }
@@ -160,9 +213,9 @@ async function route() {
   if (!me && h !== "board") return viewAuth();
   if (h === "signin") return viewAuth();
   if (h === "board") return viewBoard();
-  if (h === "instructor" && isInstructor) return viewInstructor();
+  if (h === "instructor" && isInstructor) { stopViewingAs(); return viewInstructor(); }
   if (!me.team_id) return shell(h, `<div class="card"><h2>Welcome, ${esc(me.display_name)}</h2><p>You are in ${esc(cls?.name ?? "the class")} but not on a team yet. Your instructor assigns boroughs after the first week. Check back after class.</p></div>`);
-  round = await currentRound();
+  round = roundOverride ?? await currentRound();
   if (h === "borough") return viewBorough();
   return viewFirm();
 }
@@ -269,7 +322,7 @@ async function viewFirm() {
       <div class="preview"><div class="stat pos"><div class="eyebrow">Profit</div><div class="num" id="pv">…</div></div><div class="stat ecto"><div class="eyebrow">Ghosts released</div><div class="num" id="ev">…</div></div><div class="stat neg"><div class="eyebrow" id="cl">Total containment cost</div><div class="num" id="cv">…</div></div></div>
       <div class="slider"><div class="lab"><span>Output</span><span class="num" id="qv"></span></div><input type="range" id="q" min="0" max="100" value="${q0}" ${closed ? "disabled" : ""}></div>
       ${showA ? `<div class="slider"><div class="lab"><span>Containment</span><span class="num" id="av"></span></div><input type="range" id="a" min="0" max="100" value="${a0}" ${closed ? "disabled" : ""}></div>` : ""}
-      ${closed ? `<p class="small">This round is closed. Results Monday.</p>` : `<button class="btn" id="submit">${mine ? "Update" : "Submit"} for round ${round.number}</button><div class="small" style="text-align:center;margin-top:6px">Submit by Sunday night. You can change it until then.</div>`}
+      ${closed ? `<p class="small">This round is closed. Results Monday.</p>` : viewingAs() ? `<button class="btn" disabled>Read-only while viewing as a student</button>` : `<button class="btn" id="submit">${mine ? "Update" : "Submit"} for round ${round.number}</button><div class="small" style="text-align:center;margin-top:6px">Submit by Sunday night. You can change it until then.</div>`}
       <div id="msg"></div></div>
     <label class="lab">Send a one-line note to your mayor for next week (optional)</label><input class="field" id="note" maxlength="140" value="${esc(mine?.note ?? "")}" ${closed ? "disabled" : ""}>
   </div><div>
@@ -300,6 +353,7 @@ async function viewFirm() {
     return { q, a };
   };
   const serverConfirm = debounce(async () => {
+    if (viewingAs()) return;   // preview resolves against the caller, not the student
     if (policy.kind !== "cap") return;
     const q = +$("#q").value;
     const r = await callFn("preview", { roundId: round.id, kind: "firm", q, a: 0 });
@@ -312,6 +366,7 @@ async function viewFirm() {
   const upd = () => { local(); serverConfirm(); };
   $("#q").oninput = upd; if (showA) $("#a").oninput = upd; upd();
   $("#submit")?.addEventListener("click", async () => {
+    if (viewingAs()) return;
     const row = { round_id: round.id, student_id: me.id, q: +$("#q").value, a: showA ? +$("#a").value / 100 : 0, note: $("#note").value || null, forecast: $("#fc").value === "" ? null : +$("#fc").value, extra: { ...(mine?.extra ?? {}), suggestion_only: false }, submitted_at: new Date().toISOString() };
     const { error } = await sb.from("firm_decisions").upsert(row);
     $("#msg").innerHTML = `<div class="msg ${error ? "" : "ok"}">${error ? esc(error.message) : "Submitted. You can change your decision until Sunday night."}</div>`;
@@ -380,12 +435,12 @@ async function viewBorough() {
       <div class="preview"><div class="stat ecto"><div class="eyebrow">Ghosts released</div><div class="num" id="bev">…</div></div><div class="stat pos"><div class="eyebrow" id="bl2">Revenue</div><div class="num" id="brv">…</div></div><div class="stat haunt"><div class="eyebrow">Slime damage</div><div class="num" id="bhv">…</div></div></div>
       ${types.map(t => decisionUI[t]?.() ?? "").join("<div style='height:8px'></div>")}
       ${suggestions.length && iAmMinister ? `<div class="tally"><b>Suggestions from your team:</b> ${suggestions.map(x => `${esc(x.name)}: ${esc(String(x.v))}`).join(" · ")}</div>` : ""}
-      ${closed ? `<p class="small">Round closed.</p>` : iAmMinister ? `<button class="btn" id="submit">Submit as mayor</button>` : `<button class="btn" disabled>Only ${esc(minister?.display_name ?? "the mayor")} can submit this week</button><button class="btn ghost" id="suggest">Send this to the mayor as your suggestion</button>`}
+      ${closed ? `<p class="small">Round closed.</p>` : iAmMinister ? `<button class="btn" id="submit">Submit as mayor</button>` : `<button class="btn" disabled>Only ${esc(projectMode ? "the mayor" : (minister?.display_name ?? "the mayor"))} can submit this week</button><button class="btn ghost" id="suggest">Send this to the mayor as your suggestion</button>`}
       ${!closed ? `<button class="btn ghost" id="draft">Save a draft for the team</button>` : ""}
       <div id="msg"></div>${bd ? `<p class="small">${bd.is_draft ? "Draft" : "Submitted"} ${new Date(bd.submitted_at).toLocaleString()}</p>` : ""}</div>
   </div><div>
     ${bcfg.chart ? `<div class="chart"><div id="bmac"></div><div class="cap">${esc(team.name)}'s marginal cost of containment against what one more ghost costs the whole city.</div></div>` : ""}
-    ${drawer("Your businesses last week", lastFirms.length ? `<table><tr><th>Business</th><th>Contained</th><th>Profit</th><th>Note</th></tr>${lastFirms.map(f => `<tr><td>${esc(f.s?.firm_name ?? ((TRADES[f.data.type] ?? {}).trade ?? f.s?.display_name))}<div class="small">${esc(f.s?.display_name ?? "")}</div></td><td class="num">${Math.round(f.data.a * 100)}%</td><td class="num">${fmt(f.data.profit)}</td><td class="noteq">${esc(f.note ?? "—")}</td></tr>`).join("")}</table>` : `<p class="small">No results yet.</p>`, true)}
+    ${drawer("Your businesses last week", lastFirms.length ? `<table><tr><th>Business</th><th>Contained</th><th>Profit</th><th>Note</th></tr>${lastFirms.map(f => `<tr><td>${esc(bizLabelFor(f.s, f.data.type))}<div class="small">${esc(personLabel(f.s))}</div></td><td class="num">${Math.round(f.data.a * 100)}%</td><td class="num">${fmt(f.data.profit)}</td><td class="noteq">${esc(f.note ?? "—")}</td></tr>`).join("")}</table>` : `<p class="small">No results yet.</p>`, true)}
     ${cfg.briefing?.student ? drawer("From the Institute", `<div class="brief">${cfg.briefing.student.split("\n").map(x => `<p>${esc(x)}</p>`).join("")}</div>`, true) : ""}
     ${drawer("What your borough has decided", boroughHistory(boroughRounds), boroughRounds.length > 0)}
     ${lastB ? drawer("Last week's results", `<dl class="kv"><dt>Ghosts</dt><dd>${Math.round(lastB.data.ghosts)} t</dd><dt>Slime damage</dt><dd>${fmt(lastB.data.slimeDamage)}</dd><dt>Welfare</dt><dd>${fmt(lastB.data.welfare)}</dd>${lastB.data.permitPrice != null ? `<dt>Permit price</dt><dd>${fmt(lastB.data.permitPrice)}/t</dd>` : ""}</dl>`) : ""}
@@ -443,6 +498,7 @@ async function viewBorough() {
   }, 120);
   document.querySelectorAll("input[type=range]").forEach(el => el.oninput = upd); upd();
   const save = async isDraft => {
+    if (viewingAs()) return;
     const pl = collect();
     if (types.includes("budget") && Math.round(Object.values(pl.budget).reduce((a, b) => a + b, 0) * 100) !== 100 && !isDraft) return $("#msg").innerHTML = `<div class="msg">Budget must add to 100.</div>`;
     const { error } = await sb.from("borough_decisions").upsert({ round_id: round.id, team_id: team.id, payload: pl, is_draft: isDraft, submitted_by: me.id, submitted_at: new Date().toISOString() });
@@ -451,6 +507,7 @@ async function viewBorough() {
   $("#submit")?.addEventListener("click", () => save(false));
   $("#draft")?.addEventListener("click", () => save(true));
   $("#suggest")?.addEventListener("click", async () => {
+    if (viewingAs()) return;
     const v = suggestionValue(collect());
     const { data: mine2 } = await sb.from("firm_decisions").select("*").eq("round_id", round.id).eq("student_id", me.id).maybeSingle();
     const row = mine2 ? { ...mine2, extra: { ...(mine2.extra ?? {}), suggestion: v } } : { round_id: round.id, student_id: me.id, q: 100, a: 0, extra: { suggestion: v, suggestion_only: true } };
@@ -547,6 +604,12 @@ async function viewInstructor() {
     ${cfg.example ? drawer("Worked example to project", cfg.example.split("\n").map(x => `<p>${esc(x)}</p>`).join("")) : ""}
   </div><div>
     ${drawer("Rounds", `<table><tr><th>#</th><th>Title</th><th>Status</th><th>Closes</th><th></th></tr>${rounds.map(r => `<tr><td class="num">${r.number}</td><td>${esc(r.title)}</td><td>${r.status}</td><td class="small">${r.closes_at ? new Date(r.closes_at).toLocaleDateString() : ""}</td><td><button class="btn sm ghost edit" data-id="${r.id}">Edit</button></td></tr>`).join("")}</table><button class="btn sm ghost" id="newround">Add round</button>`, !cur)}
+    ${drawer("View as a student", `<p class="small">Renders the student app exactly as that student sees it, read-only. Project mode hides names so the screen can go on the projector.</p>
+      <div style="display:flex;gap:8px;flex-wrap:wrap;align-items:center">
+      <select class="field" id="vasel" style="max-width:300px"><option value="">Choose a student\u2026</option>${students.filter(s => s.team_id && s.active).map(s => `<option value="${s.id}">${esc(s.display_name)} · ${esc(teams.find(t => t.id === s.team_id)?.name ?? "")} · ${esc((TRADES[s.firm_type ?? 3] ?? {}).trade ?? "")}</option>`).join("")}</select>
+      <select class="field" id="varound" style="max-width:210px"><option value="">Current round</option>${rounds.map(r => `<option value="${r.id}">Round ${r.number}${r.status === "draft" ? " (draft)" : ""}</option>`).join("")}</select>
+      <label class="small" style="display:flex;gap:6px;align-items:center"><input type="checkbox" id="vaproject"> Project mode</label>
+      <button class="btn sm" id="vago">View as</button></div>`)}
     ${drawer("Teams and students", `<p class="small">Assign a borough and business type per student. Mayor order rotates in the order shown. Unassigned students cannot play.</p><table><tr><th>Student</th><th>Borough</th><th>Type</th><th>Order</th><th>Active</th></tr>${students.map(s => `<tr data-id="${s.id}"><td>${esc(s.display_name)}</td><td><select class="field st" data-f="team_id" style="padding:4px 6px"><option value="">—</option>${teams.map(t => `<option value="${t.id}" ${s.team_id === t.id ? "selected" : ""}>${esc(t.name)}</option>`).join("")}</select></td><td><input class="field st" data-f="firm_type" type="number" min="1" max="5" value="${s.firm_type ?? ""}" style="width:52px;padding:4px 6px"></td><td><input class="field st" data-f="minister_order" type="number" min="1" value="${s.minister_order ?? ""}" style="width:52px;padding:4px 6px"></td><td><input type="checkbox" class="st" data-f="active" ${s.active ? "checked" : ""}></td></tr>`).join("")}</table><button class="btn sm ghost" id="autoassign">Auto-assign types and order within teams</button>`)}
     ${drawer("Setup", `<p class="small">Boroughs and rounds are seeded once from <code>content/</code>. See SETUP.md. Class code: <b>${esc(cls.code)}</b>. Public dashboard: <code>${location.origin}${location.pathname}?class=${esc(cls.code)}#board</code></p>`)}
     ${drawer("Danger zone", `<p class="small">Reset the whole class: deletes every decision and outcome, puts round 0 back to open and all other rounds to draft. Students and teams stay. Use this after testing, before the term starts. There is no undo.</p><label class="lab">Type the class code to confirm</label><input class="field" id="rc_code"><label class="lab" style="display:flex;gap:8px;align-items:center"><input type="checkbox" id="rc_teams"> Also clear team assignments</label><button class="btn sm ghost" id="resetclass" style="border-color:var(--ember);color:var(--ember)">Reset whole class</button><div id="rcmsg"></div>`)}
@@ -588,6 +651,13 @@ async function viewInstructor() {
       for (let i = 0; i < members.length; i++) await sb.from("students").update({ firm_type: ((i + ti) % 5) + 1, minister_order: i + 1 }).eq("id", members[i].id);
     }
     route();
+  });
+  $("#vago")?.addEventListener("click", async () => {
+    const id = $("#vasel").value; if (!id) return;
+    projectMode = $("#vaproject").checked;
+    const rid = $("#varound").value;
+    roundOverride = rid ? (rounds.find(r => r.id === rid) ?? null) : null;
+    await viewAs(id);
   });
   document.querySelectorAll(".edit").forEach(b => b.onclick = () => editRound(rounds.find(r => r.id === b.dataset.id)));
   $("#newround")?.addEventListener("click", () => editRound({ class_id: cls.id, number: (rounds.at(-1)?.number ?? -1) + 1, title: "", status: "draft", config: {} }));
